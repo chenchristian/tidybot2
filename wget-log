@@ -1,0 +1,20 @@
+--2026-07-29 10:54:37--  https://www.dropbox.com/scl/fi/behem9thid9benovogfdf/kortex_api-2.6.0.post3-py3-none-any.whl?rlkey=13zikoe4cwtk59q86jfx3a2k5
+Resolving www.dropbox.com (www.dropbox.com)... 162.125.2.18, 2620:100:6017:18::a27d:212
+Connecting to www.dropbox.com (www.dropbox.com)|162.125.2.18|:443... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: https://uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com/cd/0/inline/DFOHQxHQBowKtdA7VRax149NB3hujuu891txChFNyDMk7ByXNa0-tjEbwlrjwixJQOx5xAh6AyAyVBOd7rVxFDcwAk1I0mufSM6YeGmH-K4V3NXgR2hwL-yQLXZuZqAI1W7cMgHfHiKxNr3YFqA1-4nC/file# [following]
+--2026-07-29 10:54:37--  https://uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com/cd/0/inline/DFOHQxHQBowKtdA7VRax149NB3hujuu891txChFNyDMk7ByXNa0-tjEbwlrjwixJQOx5xAh6AyAyVBOd7rVxFDcwAk1I0mufSM6YeGmH-K4V3NXgR2hwL-yQLXZuZqAI1W7cMgHfHiKxNr3YFqA1-4nC/file
+Resolving uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com (uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com)... 162.125.2.15, 2620:100:6017:15::a27d:20f
+Connecting to uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com (uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com)|162.125.2.15|:443... connected.
+HTTP request sent, awaiting response... 302 Found
+Location: /cd/0/inline2/DFPtCf9Aamhvaf9GRO_6vYeA4DCc05-OGPQdnPQy0sUw7zFU5zBDqPe6LD5mdVVlzUtrRQ5D04OzIIfrehlQH-QTusA_cV9EhXrlQIyxE7T-ftodCIzEYIQii90fQOt26Dyz7Sh57ASc9cRzJ3M1DuwiOPJZ6F137lOlMKOoFvAEMoz9WiXFzuxRw9HTd05PkEZ4IWjNdseuJGMNwISTZ3icgzpH6_V03mvuwwpBito_ueF0ZFt5nmXfdk2HKYCYZ1Ibz0t-wBcSAdWz1gvyBkRLr1C9-KHPuJC_FAifbVpziNk9bakAKaR_FV4BxIQ-A2eUUGM1Pk2GbaNGK8Va6oEb3JinhaSw3elteG5_ZpfnOHyc_RoVx3W84nhzJM9TboQ/file [following]
+--2026-07-29 10:54:38--  https://uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com/cd/0/inline2/DFPtCf9Aamhvaf9GRO_6vYeA4DCc05-OGPQdnPQy0sUw7zFU5zBDqPe6LD5mdVVlzUtrRQ5D04OzIIfrehlQH-QTusA_cV9EhXrlQIyxE7T-ftodCIzEYIQii90fQOt26Dyz7Sh57ASc9cRzJ3M1DuwiOPJZ6F137lOlMKOoFvAEMoz9WiXFzuxRw9HTd05PkEZ4IWjNdseuJGMNwISTZ3icgzpH6_V03mvuwwpBito_ueF0ZFt5nmXfdk2HKYCYZ1Ibz0t-wBcSAdWz1gvyBkRLr1C9-KHPuJC_FAifbVpziNk9bakAKaR_FV4BxIQ-A2eUUGM1Pk2GbaNGK8Va6oEb3JinhaSw3elteG5_ZpfnOHyc_RoVx3W84nhzJM9TboQ/file
+Reusing existing connection to uce2e58aa1d1b10ebd57189cd50d.dl.dropboxusercontent.com:443.
+HTTP request sent, awaiting response... 200 OK
+Length: 164637 (161K) [application/octet-stream]
+Saving to: ‘kortex_api-2.6.0.post3-py3-none-any.whl?rlkey=13zikoe4cwtk59q86jfx3a2k5’
+
+                 kortex_api-2.6.0   0%[                                                           ]       0  --.-KB/s               kortex_api-2.6.0.post3-py3-none-a 100%[==========================================================>] 160.78K  --.-KB/s    in 0.02s   
+
+2026-07-29 10:54:38 (8.12 MB/s) - ‘kortex_api-2.6.0.post3-py3-none-any.whl?rlkey=13zikoe4cwtk59q86jfx3a2k5’ saved [164637/164637]
+

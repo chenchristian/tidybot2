@@ -3,3 +3,9 @@ __pycache__
 .ipynb_checkpoints
 *.un~
 *.swp
+data/
+*.hdf5
+*.pt
+*.ckpt
+__pycache__/
+*.pid

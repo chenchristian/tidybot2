@@ -47,6 +47,7 @@ def run_episode(env, policy, writer=None):
 
         # Get action
         action = policy.step(obs)
+        print('DEBUG action:', action)
 
         # No action if teleop not enabled
         if action is None:
@@ -89,7 +90,7 @@ def main(args):
             env = MujocoEnv()
     else:
         from real_env import RealEnv
-        env = RealEnv()
+        env = RealEnv(arm_enabled=False, camera_enabled=False)
 
     # Create policy
     if args.teleop:

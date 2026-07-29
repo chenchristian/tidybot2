@@ -3,13 +3,13 @@ import numpy as np
 ################################################################################
 # Mobile base
 
+#Remember to change as needed
 # Vehicle center to steer axis (m)
 h_x, h_y = 0.190150 * np.array([1.0, 1.0, -1.0, -1.0]), 0.170150 * np.array([-1.0, 1.0, 1.0, -1.0])  # Kinova / Franka
 # h_x, h_y = 0.140150 * np.array([1.0, 1.0, -1.0, -1.0]), 0.120150 * np.array([-1.0, 1.0, 1.0, -1.0])  # ARX5
 
 # Encoder magnet offsets
-ENCODER_MAGNET_OFFSETS = [0.0 / 4096, 0.0 / 4096, 0.0 / 4096, 0.0 / 4096]  # TODO
-
+ENCODER_MAGNET_OFFSETS = [1571.0 / 4096, 747.0 / 4096, 2773.0 / 4096, 3047.0 / 4096]
 ################################################################################
 # Teleop and imitation learning
 
@@ -21,7 +21,7 @@ ARM_RPC_PORT = 50001
 RPC_AUTHKEY = b'secret password'
 
 # Cameras
-BASE_CAMERA_SERIAL = 'TODO'
+BASE_CAMERA_SERIAL = '2512APC1ZSZ9'
 # WRIST_CAMERA_SERIAL = 'TODO'  # Not used by Kinova wrist camera
 
 # Policy
