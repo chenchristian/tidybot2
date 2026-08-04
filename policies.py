@@ -75,8 +75,8 @@ TWO_PI = 2 * math.pi
 class TeleopController:
     def __init__(self):
         # Teleop device IDs
-        self.primary_device_id = None    # Primary device controls either the arm or the base
-        self.secondary_device_id = None  # Optional secondary device controls the base
+        self.primary_device_id = None    # Primary device controls the base
+        self.secondary_device_id = None  # Optional secondary device also controls the base
         self.enabled_counts = {}
 
         # Mobile base pose
@@ -92,15 +92,9 @@ class TeleopController:
         # WebXR reference poses
         self.base_xr_ref_pos = None
         self.base_xr_ref_rot_inv = None
-        self.arm_xr_ref_pos = None
-        self.arm_xr_ref_rot_inv = None
 
         # Robot reference poses
         self.base_ref_pose = None
-        self.arm_ref_pos = None
-        self.arm_ref_rot = None
-        self.arm_ref_base_pose = None  # For optional secondary control of base
-        self.gripper_ref_pos = None
 
     def process_message(self, data):
         if not self.targets_initialized:
@@ -123,7 +117,6 @@ class TeleopController:
             if device_id == self.primary_device_id:
                 self.primary_device_id = None  # Primary device no longer enabled
                 self.base_xr_ref_pos = None
-                self.arm_xr_ref_pos = None
             elif device_id == self.secondary_device_id:
                 self.secondary_device_id = None
                 self.base_xr_ref_pos = None
@@ -132,49 +125,19 @@ class TeleopController:
         if self.primary_device_id is not None and 'teleop_mode' in data:
             pos, rot = convert_webxr_pose(data['position'], data['orientation'])
 
-            # Base movement
-            if data['teleop_mode'] == 'base' or device_id == self.secondary_device_id:  # Note: Secondary device can only control base
-                # Store reference poses
-                if self.base_xr_ref_pos is None:
-                    self.base_ref_pose = self.base_pose.copy()
-                    self.base_xr_ref_pos = pos[:2]
-                    self.base_xr_ref_rot_inv = rot.inv()
+            # Store reference poses
+            if self.base_xr_ref_pos is None:
+                self.base_ref_pose = self.base_pose.copy()
+                self.base_xr_ref_pos = pos[:2]
+                self.base_xr_ref_rot_inv = rot.inv()
 
-                # Position
-                self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
+            # Position
+            self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
 
-                # Orientation
-                base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
-                base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
-                self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
-
-            # Arm movement
-            elif data['teleop_mode'] == 'arm':
-                # Store reference poses
-                if self.arm_xr_ref_pos is None:
-                    self.arm_xr_ref_pos = pos
-                    self.arm_xr_ref_rot_inv = rot.inv()
-                    self.arm_ref_pos = self.arm_target_pos.copy()
-                    self.arm_ref_rot = self.arm_target_rot
-                    self.arm_ref_base_pose = self.base_pose.copy()
-                    self.gripper_ref_pos = self.gripper_target_pos
-
-                # Rotations around z-axis to go between global frame (base) and local frame (arm)
-                z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.base_pose[2])
-                z_rot_inv = z_rot.inv()
-                ref_z_rot = R.from_rotvec(np.array([0.0, 0.0, 1.0]) * self.arm_ref_base_pose[2])
-
-                # Position
-                pos_diff = pos - self.arm_xr_ref_pos  # WebXR
-                pos_diff += ref_z_rot.apply(self.arm_ref_pos) - z_rot.apply(self.arm_ref_pos)  # Secondary base control: Compensate for base rotation
-                pos_diff[:2] += self.arm_ref_base_pose[:2] - self.base_pose[:2]  # Secondary base control: Compensate for base translation
-                self.arm_target_pos = self.arm_ref_pos + z_rot_inv.apply(pos_diff)
-
-                # Orientation
-                self.arm_target_rot = (z_rot_inv * (rot * self.arm_xr_ref_rot_inv) * ref_z_rot) * self.arm_ref_rot
-
-                # Gripper position
-                self.gripper_target_pos = np.clip(self.gripper_ref_pos + data['gripper_delta'], 0.0, 1.0)
+            # Orientation
+            base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
+            base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
+            self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
 
         # Teleop is disabled
         elif self.primary_device_id is None:

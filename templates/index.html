@@ -38,12 +38,32 @@
         margin: 0;
         touch-action: none;
       }
+
+      #teleopToggle {
+        position: fixed;
+        left: 50%;
+        bottom: 2em;
+        transform: translateX(-50%);
+        z-index: 1;
+        padding: 0.75em 1.5em;
+        font-size: 1.25em;
+        border: none;
+        border-radius: 2em;
+        background-color: #CC3333;
+        color: white;
+        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+      }
+
+      #teleopToggle.active {
+        background-color: #33AA55;
+      }
     </style>
   </head>
   <body>
     <div id="overlay">
       <header></header>
       <p><span id="info"></span></p>
+      <button id="teleopToggle" type="button">Enable Teleop</button>
     </div>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script type="text/javascript">
@@ -89,6 +109,15 @@
       // WebGL scene globals
       let gl = null;
 
+      // Teleop on/off state, toggled by the on-screen button
+      let teleopEnabled = false;
+      const teleopButton = document.getElementById('teleopToggle');
+      teleopButton.addEventListener('click', () => {
+        teleopEnabled = !teleopEnabled;
+        teleopButton.textContent = teleopEnabled ? 'Disable Teleop' : 'Enable Teleop';
+        teleopButton.classList.toggle('active', teleopEnabled);
+      });
+
       function initXR() {
         xrButton = new WebXRButton({
           onRequestSession,
@@ -125,7 +154,6 @@
         gl = canvas.getContext('webgl', {
           xrCompatible: true,
         });
-        addCanvasListeners(gl.canvas);
         session.updateRenderState({ baseLayer: new XRWebGLLayer(session, gl) });
         session.requestReferenceSpace('local').then((refSpace) => {
           xrRefSpace = refSpace;
@@ -154,62 +182,27 @@
       function onSessionEnded(event) {
         xrButton.setSession(null);
         gl = null;
-      }
 
-      // Touch event handling
-      let touchId; let touchStartY; let touchDeltaY; let teleopMode;
-      function addCanvasListeners(canvas) {
-        function handleTouch(touch) {
-          touchDeltaY = (touchStartY - touch.clientY) / (0.2 * window.innerHeight);
-          touchDeltaY = Math.min(1, Math.max(-1, touchDeltaY));
-        }
-
-        canvas.addEventListener('touchstart', (event) => {
-          if (touchId === undefined) {
-            const touch = event.changedTouches[0];
-            touchId = touch.identifier;
-            touchStartY = touch.clientY;
-            teleopMode = touch.clientX < 0.9 * window.innerWidth ? 'arm' : 'base';
-            handleTouch(touch);
-          }
-        });
-
-        canvas.addEventListener('touchmove', (event) => {
-          for (const touch of event.changedTouches) {
-            if (touchId === touch.identifier) {
-              handleTouch(touch);
-            }
-          }
-        });
-
-        function updateTouchIds(event) {
-          for (const touch of event.changedTouches) {
-            if (touchId === touch.identifier) {
-              touchId = undefined;
-            }
-          }
-        }
-        canvas.addEventListener('touchend', updateTouchIds);
-        canvas.addEventListener('touchcancel', updateTouchIds);
+        // Reset teleop toggle for the next session
+        teleopEnabled = false;
+        teleopButton.textContent = 'Enable Teleop';
+        teleopButton.classList.remove('active');
       }
 
       function onXRFrame(t, frame) {
         frame.session.requestAnimationFrame(onXRFrame);
 
-        // Visualize status of touch control
-        const r = (touchId !== undefined && teleopMode === 'base') ? 0.25 : 0;
-        const b = (touchId !== undefined && teleopMode === 'arm')
-          ? (Math.abs(touchDeltaY) === 1 ? 1 : 0.25 + 0.25 * touchDeltaY)
-          : 0;
-        gl.clearColor(r, 0, b, 0.5);
+        // Visualize teleop on/off status
+        const r = teleopEnabled ? 0.25 : 0;
+        gl.clearColor(r, 0, 0, 0.5);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
         // Send data to server
         const data = { timestamp: Date.now(), device_id: deviceId };
-        if (touchId !== undefined) {
+        if (teleopEnabled) {
           const pose = frame.getViewerPose(xrRefSpace);
           if (pose) {
-            data.teleop_mode = teleopMode;
+            data.teleop_mode = 'base';
             data.position = {
               x: pose.transform.inverse.position.x,
               y: pose.transform.inverse.position.y,
@@ -221,9 +214,6 @@
               z: pose.transform.inverse.orientation.z,
               w: pose.transform.inverse.orientation.w,
             };
-          }
-          if (teleopMode === 'arm') {
-            data.gripper_delta = touchDeltaY;
           }
         }
         socket.send(data);
