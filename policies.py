@@ -106,6 +106,14 @@ class TeleopController:
         self.base_xr_ref_pos = None
         self.base_xr_ref_rot_inv = None
 
+        # Yaw offset aligning the phone's heading (in the WebXR world frame) with the robot's
+        # heading at the moment teleop was (re-)enabled. The WebXR world frame's orientation is
+        # arbitrary -- fixed by whichever way the phone happened to be facing when the AR session
+        # was created -- so without this, translating the phone straight ahead only maps to the
+        # robot's forward direction when the two happen to already line up; otherwise it bleeds
+        # into an unwanted sideways component.
+        self.base_xr_to_robot_yaw = None
+
         # Robot reference poses
         self.base_ref_pose = None
 
@@ -156,10 +164,21 @@ class TeleopController:
                 self.base_xr_ref_pos = pos[:2]
                 self.base_xr_ref_rot_inv = rot.inv()
 
-            # Position: deadbanded + low-pass filtered to smooth out WebXR tracking jitter.
-            # Below the deadband the target is left exactly where it is, so a stationary
-            # phone produces zero commanded motion instead of asymptotically-decaying creep.
-            raw_target_xy = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
+                # See base_xr_to_robot_yaw comment in __init__: align the phone's current
+                # heading (in the WebXR world frame) with the robot's current heading, so
+                # phone-forward tracks robot-forward regardless of how the WebXR session's
+                # world frame happens to be oriented.
+                phone_fwd = rot.apply([1.0, 0.0, 0.0])
+                phone_ref_theta = math.atan2(phone_fwd[1], phone_fwd[0])
+                self.base_xr_to_robot_yaw = self.base_ref_pose[2] - phone_ref_theta
+
+            # Position: rotated into the robot frame (see above), then deadbanded + low-pass
+            # filtered to smooth out WebXR tracking jitter. Below the deadband the target is
+            # left exactly where it is, so a stationary phone produces zero commanded motion
+            # instead of asymptotically-decaying creep.
+            c, s = math.cos(self.base_xr_to_robot_yaw), math.sin(self.base_xr_to_robot_yaw)
+            dx, dy = pos[:2] - self.base_xr_ref_pos
+            raw_target_xy = self.base_ref_pose[:2] + np.array([c * dx - s * dy, s * dx + c * dy])
             delta_xy = raw_target_xy - self.base_target_pose[:2]
             if np.linalg.norm(delta_xy) > POSE_DEADBAND_POS:
                 self.base_target_pose[:2] += POSE_FILTER_ALPHA * delta_xy
