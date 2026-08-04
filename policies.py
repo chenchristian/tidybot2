@@ -72,12 +72,25 @@ def convert_webxr_pose(pos, quat):
 
 TWO_PI = 2 * math.pi
 
+# Low-pass filter strength for smoothing noisy WebXR pose tracking (0 < alpha <= 1,
+# lower is smoother but laggier). Without this, phone tracking jitter feeds straight
+# into the base target and shows up as shaking even while the phone is held still.
+POSE_FILTER_ALPHA = 0.2
+
+# Deadbands below which raw WebXR movement is ignored entirely rather than just damped.
+# EMA smoothing alone still lets small steady-state noise nudge the target every frame,
+# which the base then chases; a deadband lets the target (and the base) go fully still
+# when the phone isn't really moving, instead of asymptotically settling.
+POSE_DEADBAND_POS = 0.01          
+POSE_DEADBAND_THETA = math.radians(0.5)  # 0.5 deg
+
 class TeleopController:
     def __init__(self):
         # Teleop device IDs
         self.primary_device_id = None    # Primary device controls the base
         self.secondary_device_id = None  # Optional secondary device also controls the base
         self.enabled_counts = {}
+        self.miss_counts = {}
 
         # Mobile base pose
         self.base_pose = None
@@ -103,8 +116,20 @@ class TeleopController:
         # Use device ID to disambiguate between primary and secondary devices
         device_id = data['device_id']
 
-        # Update enabled count for the device that sent this message
-        self.enabled_counts[device_id] = self.enabled_counts.get(device_id, 0) + 1 if 'teleop_mode' in data else 0
+        # Update enabled count for the device that sent this message. WebXR pose tracking can
+        # drop out for a frame or two (most often while the phone is held nearly still, since
+        # tracking relies on motion parallax), so a short run of missed frames is tolerated
+        # before treating the device as disabled -- otherwise every dropout snaps the base
+        # target back to the current pose and shows up as shaking.
+        if 'teleop_mode' in data:
+            self.enabled_counts[device_id] = self.enabled_counts.get(device_id, 0) + 1
+            self.miss_counts[device_id] = 0
+        else:
+            self.miss_counts[device_id] = self.miss_counts.get(device_id, 0) + 1
+            if self.miss_counts[device_id] > 5:  # ~5 consecutive missed frames (~80 ms at 60 Hz)
+                self.enabled_counts[device_id] = 0
+            else:
+                self.enabled_counts.setdefault(device_id, 0)
 
         # Assign primary and secondary devices
         if self.enabled_counts[device_id] > 2:
@@ -131,13 +156,20 @@ class TeleopController:
                 self.base_xr_ref_pos = pos[:2]
                 self.base_xr_ref_rot_inv = rot.inv()
 
-            # Position
-            self.base_target_pose[:2] = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
+            # Position: deadbanded + low-pass filtered to smooth out WebXR tracking jitter.
+            # Below the deadband the target is left exactly where it is, so a stationary
+            # phone produces zero commanded motion instead of asymptotically-decaying creep.
+            raw_target_xy = self.base_ref_pose[:2] + (pos[:2] - self.base_xr_ref_pos)
+            delta_xy = raw_target_xy - self.base_target_pose[:2]
+            if np.linalg.norm(delta_xy) > POSE_DEADBAND_POS:
+                self.base_target_pose[:2] += POSE_FILTER_ALPHA * delta_xy
 
-            # Orientation
+            # Orientation (same deadband + low-pass filtering, applied to the unwrapped delta)
             base_fwd_vec_rotated = (rot * self.base_xr_ref_rot_inv).apply([1.0, 0.0, 0.0])
             base_target_theta = self.base_ref_pose[2] + math.atan2(base_fwd_vec_rotated[1], base_fwd_vec_rotated[0])
-            self.base_target_pose[2] += (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi  # Unwrapped
+            unwrapped_delta = (base_target_theta - self.base_target_pose[2] + math.pi) % TWO_PI - math.pi
+            if abs(unwrapped_delta) > POSE_DEADBAND_THETA:
+                self.base_target_pose[2] += POSE_FILTER_ALPHA * unwrapped_delta
 
         # Teleop is disabled
         elif self.primary_device_id is None:
