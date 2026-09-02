@@ -197,58 +197,63 @@ PAGE = r"""<!doctype html>
   const CAMS = /*CAMERAS_JSON*/;
   let selected = (CAMS.find(c => c.online) || CAMS[0] || {}).key;
 
-  function streamNode(cam) {
-    if (!cam.online) {
+  // One persistent stream node per camera, created once. Moving these around the
+  // DOM does NOT restart the MJPEG connection, so switching cameras is instant
+  // and never flashes black.
+  const nodes = {};
+  for (const cam of CAMS) {
+    if (cam.online) {
+      const img = document.createElement('img');
+      img.alt = cam.location;
+      img.src = '/stream/' + cam.key;
+      nodes[cam.key] = img;
+    } else {
       const d = document.createElement('div');
       d.className = 'offline';
       d.textContent = 'offline — ' + (cam.error || 'not connected');
-      return d;
+      nodes[cam.key] = d;
     }
-    const img = document.createElement('img');
-    img.alt = cam.location;
-    img.src = '/stream/' + cam.key + '?t=' + Date.now();
-    return img;
   }
 
   function render() {
     const cam = CAMS.find(c => c.key === selected) || CAMS[0];
 
-    // primary
     const pf = document.getElementById('primary-frame');
-    pf.innerHTML = '';
-    pf.appendChild(streamNode(cam));
+    pf.replaceChildren(nodes[cam.key]);
     const pill = document.createElement('span');
     pill.className = 'pill' + (cam.online ? '' : ' down');
     pill.textContent = cam.online ? 'LIVE' : 'DOWN';
     pf.appendChild(pill);
 
     document.getElementById('primary-caption').innerHTML =
-      '<span class="loc">' + cam.location + '</span>' +
-      '<span class="sep">—</span>' +
-      '<span class="mono">' + cam.device + '</span>' +
-      '<span class="sep">·</span>' +
-      '<span class="mono">' + cam.serial + '</span>' +
-      '<span class="sep">·</span>' +
-      '<span class="mono">' + cam.mode + '</span>';
+      '<span class="loc"></span><span class="sep">—</span><span class="mono d"></span>'
+      + '<span class="sep">·</span><span class="mono s"></span>'
+      + '<span class="sep">·</span><span class="mono m"></span>';
+    const cap = document.getElementById('primary-caption');
+    cap.querySelector('.loc').textContent = cam.location;
+    cap.querySelector('.d').textContent = cam.device;
+    cap.querySelector('.s').textContent = cam.serial;
+    cap.querySelector('.m').textContent = cam.mode;
 
-    // rail: the other cameras
     const rail = document.getElementById('rail');
-    rail.innerHTML = '';
+    rail.replaceChildren();
     CAMS.filter(c => c.key !== cam.key).forEach(c => {
       const b = document.createElement('button');
       b.className = 'thumb';
       b.onclick = () => { selected = c.key; render(); };
       const fr = document.createElement('div');
       fr.className = 'frame';
-      fr.appendChild(streamNode(c));
+      fr.appendChild(nodes[c.key]);
       const chip = document.createElement('span');
       chip.className = 'chip';
       chip.textContent = c.location;
       fr.appendChild(chip);
       const meta = document.createElement('div');
       meta.className = 'tmeta';
-      meta.innerHTML = '<b>' + c.location + '</b><span>' + c.serial + '</span>';
-      b.appendChild(fr); b.appendChild(meta);
+      const bb = document.createElement('b'); bb.textContent = c.location;
+      const sp = document.createElement('span'); sp.textContent = c.serial;
+      meta.append(bb, sp);
+      b.append(fr, meta);
       rail.appendChild(b);
     });
   }
