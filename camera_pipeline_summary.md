@@ -12,7 +12,7 @@ All of it is the camera pipeline — no other part of the repo was touched.
 |---|---|
 | `record_video_config.py` | Every camera / recording setting in one place: data directory, camera roster + serials, record rate, capture resolution / fps / focus, video codec, auto-stop. Imports nothing — safe to import anywhere. |
 | `record_video.py` | `record_video()` function + CLI. The one entry point for recording a camera-only episode (`python record_video.py`, Ctrl+C to stop, or `--seconds N`). |
-| `camera_monitor.py` | Live web monitor — Flask app serving an MJPEG stream per camera plus a "Pilot View" page (one feed large, the others as clickable thumbnails). Read-only; touches no motors. Run on the mini-PC, open from any browser on the LAN. |
+| `camera_monitor.py` | Web monitor — Flask app, "Pilot View" page (one feed large, the others as clickable thumbnails). **Live** mode streams the cameras (MJPEG); **`--replay`** mode plays back a recorded episode with a timeline scrubber and play/pause (no hardware needed). Read-only; touches no motors. Run on the mini-PC, open from any browser on the LAN. |
 
 ## Modified files
 
@@ -51,10 +51,12 @@ python main.py --teleop --save --cameras   # full teleop demo (needs base_server
 Episodes land in `<DATA_DIR>/<timestamp>/` — one `<camera>.mp4` per camera plus
 `data.pkl`. Edit `record_video_config.py` to change any setting.
 
-## Live monitor
+## Monitor — live or replay
 
 ```bash
-python camera_monitor.py --port 8000
+python camera_monitor.py                     # live view of the cameras
+python camera_monitor.py --replay            # play back the most recent recording
+python camera_monitor.py --replay data/demos/<timestamp>   # a specific recording
 # then open http://<mini-pc>:8000 from a browser on the LAN
 ```
 

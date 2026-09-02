@@ -43,7 +43,8 @@ Hardware this pipeline targets:
                                                                               │
                                                                               └─▶ convert_to_robomimic_hdf5.py ─▶ GPU training
 
-   MONITOR ── camera_monitor.py (Flask) ──/stream/<obs_key>──▶ browser (MJPEG, Pilot View)
+   MONITOR ── camera_monitor.py (Flask) ─┬─ live:   ──/stream/<obs_key>──────────▶ browser (MJPEG, Pilot View)
+                                         └─ replay: EpisodeReader ──/replay/frame/<key>/<i>──▶ browser (Pilot View + scrubber)
 ```
 
 Two rates, do not confuse them:
@@ -165,20 +166,40 @@ use `main.py --teleop --save --cameras` instead — that path goes through
   arm).
 - `close()` closes every camera.
 
-### `camera_monitor.py` — live monitor (new)
+### `camera_monitor.py` — monitor, live or replay (new)
 
-Flask app, run on the mini-PC, viewed from a browser on the LAN.
+Flask app, run on the mini-PC, viewed from a browser on the LAN. `MODE` global
+is `'live'` or `'replay'`.
 
+**Live** (`MODE == 'live'`, default):
 - `open_cameras(roster)` — builds each camera, recording `{ok, err}` per entry;
   a failed camera does not stop the others.
 - `mjpeg_frames(entry)` — generator: JPEG-encode the latest frame at
   `STREAM_FPS` (default 20), yield `multipart/x-mixed-replace` parts.
-- Routes: `GET /` (Pilot View HTML), `GET /stream/<obs_key>` (MJPEG),
-  `GET /status` (JSON: per-camera online/serial/error).
-- The page keeps one persistent `<img>` per camera and moves the DOM nodes
-  between the "primary" slot and the thumbnail rail on click — moving a node
-  does not restart its MJPEG connection, so switching is instant.
-- CLI: `--port` (8000), `--host` (0.0.0.0), `--fps`, `--quality`, `--cameras`.
+- `GET /stream/<obs_key>` serves the MJPEG stream.
+- The page keeps one persistent `<img src="/stream/<key>">` per camera and moves
+  the DOM nodes between the "primary" slot and the thumbnail rail on click —
+  moving a node does not restart its MJPEG connection, so switching is instant.
+
+**Replay** (`MODE == 'replay'`, `--replay [EPISODE_DIR]`):
+- `load_replay(spec)` — `spec` is `'__latest__'` (newest dir under
+  `default_data_dir()` containing `data.pkl`) or an episode path. Builds
+  `REPLAY = {reader: EpisodeReader, dir, keys, num_frames, fps}`. `fps` is
+  derived from `reader.timestamps`, falling back to `RECORD_HZ`.
+- `GET /replay/frame/<key>/<int:idx>` — JPEG of `reader.observations[idx][key]`,
+  `Cache-Control: max-age=3600` (frames never change).
+- No cameras are opened — replay works with the hardware absent or in use.
+- The page shows a `REPLAY` badge + the episode path, an amber "RECORDING" pill
+  instead of the green "LIVE" one, and a bottom transport bar: play/pause
+  button, `<input type=range>` scrubber, and a `t / total s · frame / N`
+  readout. Playback is a client-side `setInterval` at `fps` that advances the
+  frame index and rewrites every visible `<img>.src` to the per-frame endpoint;
+  it loops at the end. Space = play/pause, arrows = step.
+
+- `GET /` serves the Pilot View HTML (branches on `CONFIG.mode`).
+- `GET /status` returns the same `page_config()` JSON the page is seeded with.
+- CLI: `--port` (8000), `--host` (0.0.0.0), `--fps`, `--quality`, `--cameras`
+  (live only), `--replay [EPISODE_DIR]`.
 - Read-only. No motors.
 
 ### `constants.py` — re-exports (modified)
@@ -260,7 +281,8 @@ Identical directory layout, so `replay_episodes.py` and
 - Arm integration (Seeed B601 driver) — separate track, not started. Until an
   arm server exists, `main.py --arms` cannot run; camera recording via
   `record_video.py` does not need it.
-- No in-browser playback of saved episodes (monitor is live-only).
+- Replay is RGB-only and has no per-frame proprio/action overlay (use
+  `replay_episodes.py` for that, on a machine with a display).
 
 ---
 
