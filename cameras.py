@@ -126,11 +126,15 @@ class RealSenseCamera:
             # frames = self.align.process(frames)
             color_frame = frames.get_color_frame()
             if color_frame:
-                self.image = np.asanyarray(color_frame.get_data())  # HWC uint8 RGB
+                # .copy() is REQUIRED: np.asanyarray() only wraps librealsense's
+                # frame buffer. Holding that view in self.image stops librealsense
+                # from recycling the buffer; its frame pool fills up after ~16
+                # frames and wait_for_frames() then stalls the stream forever.
+                self.image = np.asanyarray(color_frame.get_data()).copy()  # HWC uint8 RGB
                 self.last_read_time = time.time()
             # depth_frame = frames.get_depth_frame()
             # if depth_frame:
-            #     self.depth_image = np.asanyarray(depth_frame.get_data())  # HW uint16, mm
+            #     self.depth_image = np.asanyarray(depth_frame.get_data()).copy()  # HW uint16, mm
 
     def get_image(self):
         return self.image
