@@ -9,7 +9,7 @@ or from the shell:
 
     python record_video.py                      # settings from record_video_config.py
     python record_video.py --seconds 10
-    python record_video.py --data-dir /mnt/nas/demos
+    python record_video.py --endpoint /mnt/nas/demos
 
 It opens the cameras in record_video_config.CAMERAS, records their RGB frames
 into an episode (one <camera>.mp4 + data.pkl) at RECORD_HZ, and writes it to a
@@ -41,13 +41,14 @@ _ZERO_OBS = {
 }
 
 
-def record_video(seconds=None, cameras=None, data_dir=None, record_hz=None):
+def record_video(seconds=None, cameras=None, endpoint=None, record_hz=None):
     """Record one camera-only episode. Returns the episode directory as a string.
 
     seconds   -- auto-stop after N seconds. Default record_video_config.MAX_SECONDS
                  (None = record until KeyboardInterrupt).
     cameras   -- {obs_key: (backend, identifier)}. Default record_video_config.CAMERAS.
-    data_dir  -- output root. Default $TIDYBOT_DATA_DIR or record_video_config.DATA_DIR.
+    endpoint  -- data collection endpoint (output root). Default $TIDYBOT_DATA_DIR
+                 or record_video_config.DATA_DIR.
     record_hz -- frames per second written. Default record_video_config.RECORD_HZ.
     """
     roster = cameras or cfg.CAMERAS
@@ -62,7 +63,7 @@ def record_video(seconds=None, cameras=None, data_dir=None, record_hz=None):
             time.sleep(0.01)
         print(f'  {key}: {cam.get_image().shape}')
 
-    root = os.path.expanduser(data_dir) if data_dir else default_data_dir()
+    root = os.path.expanduser(endpoint) if endpoint else default_data_dir()
     writer = EpisodeWriter(root)
     limit = 'Ctrl+C to stop' if stop_after is None else f'{stop_after:g}s (Ctrl+C to stop early)'
     print(f'Recording -> {writer.episode_dir}  ({hz:g} Hz, {limit})')
@@ -110,8 +111,9 @@ if __name__ == '__main__':
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--seconds', type=float, default=None,
                         help='auto-stop after N seconds (default: config MAX_SECONDS)')
-    parser.add_argument('--data-dir', default=None,
-                        help='output root (default: $TIDYBOT_DATA_DIR or config DATA_DIR)')
+    parser.add_argument('--endpoint', default=None,
+                        help='data collection endpoint / output root '
+                             '(default: $TIDYBOT_DATA_DIR or record_video_config.DATA_DIR)')
     parser.add_argument('--record-hz', type=float, default=None,
                         help='frames per second written (default: config RECORD_HZ)')
     parser.add_argument('--cameras', nargs='*', default=None,
@@ -119,5 +121,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     record_video(seconds=args.seconds,
                  cameras=_parse_cameras(args.cameras) if args.cameras else None,
-                 data_dir=args.data_dir,
+                 endpoint=args.endpoint,
                  record_hz=args.record_hz)
