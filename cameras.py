@@ -67,6 +67,72 @@ class LogitechCamera(Camera):
 
         return cap
 
+def list_realsense_serials():
+    """Return [(name, serial), ...] for every connected RealSense device."""
+    import pyrealsense2 as rs
+    ctx = rs.context()
+    return [(d.get_info(rs.camera_info.name), d.get_info(rs.camera_info.serial_number))
+            for d in ctx.query_devices()]
+
+class RealSenseCamera(Camera):
+    # Intel RealSense D405 wrist camera. RGB only for now (matches the TidyBot++
+    # paper); the D405 also has a depth stream that can be enabled later -- see the
+    # commented lines below and get_depth().
+    def __init__(self, serial, frame_width=640, frame_height=480, fps=30):
+        import pyrealsense2 as rs
+        self.rs = rs
+        self.serial = serial
+        self.frame_width = frame_width
+        self.frame_height = frame_height
+        self.depth_image = None
+
+        connected = {s for _, s in list_realsense_serials()}
+        assert serial in connected, (
+            f'RealSense {serial} not found. Connected: {sorted(connected) or "none"}. '
+            f'Run `python -m cameras` to list devices.')
+
+        self.pipeline = rs.pipeline()
+        config = rs.config()
+        config.enable_device(serial)
+        config.enable_stream(rs.stream.color, frame_width, frame_height, rs.format.rgb8, fps)
+        # config.enable_stream(rs.stream.depth, frame_width, frame_height, rs.format.z16, fps)
+        self.profile = self.pipeline.start(config)
+        # self.align = rs.align(rs.stream.color)  # align depth into the color frame
+
+        super().__init__()
+
+        # Wait for the first frame so get_image() never returns None to callers
+        # that don't expect it (matches KinovaCamera's warm-up behavior)
+        while self.image is None:
+            time.sleep(0.01)
+
+    def camera_worker(self):
+        # librealsense delivers frames on its own; wait_for_frames() blocks until
+        # the next one is ready, so this loop naturally runs at the stream fps
+        while True:
+            try:
+                frames = self.pipeline.wait_for_frames(1000)
+            except RuntimeError:
+                continue  # timeout - camera hiccup, just retry
+            # frames = self.align.process(frames)
+            color_frame = frames.get_color_frame()
+            if color_frame:
+                self.image = np.asanyarray(color_frame.get_data())  # HWC uint8 RGB
+                self.last_read_time = time.time()
+            # depth_frame = frames.get_depth_frame()
+            # if depth_frame:
+            #     self.depth_image = np.asanyarray(depth_frame.get_data())  # HW uint16, mm
+
+    def get_depth(self):
+        # Returns None until the depth stream above is uncommented
+        return self.depth_image
+
+    def close(self):
+        try:
+            self.pipeline.stop()
+        except RuntimeError:
+            pass
+
 def find_fisheye_center(image):
     # Find contours
     gray = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
@@ -149,24 +215,53 @@ class KinovaCamera(Camera):
             sensor_focus_action.manual_focus.value = 0
             vision_config.DoSensorFocusAction(sensor_focus_action, vision_device_id)
 
+def _build_camera(backend, identifier):
+    if backend == 'logitech':
+        return LogitechCamera(identifier)
+    if backend == 'realsense':
+        return RealSenseCamera(identifier)
+    if backend == 'kinova':
+        return KinovaCamera()
+    raise ValueError(f'unknown camera backend: {backend}')
+
 if __name__ == '__main__':
-    base_camera = LogitechCamera(BASE_CAMERA_SERIAL)
-    wrist_camera = KinovaCamera()
+    # Headless helper (works over SSH, no display needed):
+    #   python -m cameras                 list connected cameras
+    #   python -m cameras --snapshot      grab one frame from every camera in
+    #                                     constants.CAMERAS and save it as a .jpg
+    import argparse
+    from constants import CAMERAS
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--snapshot', action='store_true',
+                        help='capture one frame per configured camera and save as jpg')
+    args = parser.parse_args()
+
+    print('RealSense devices:')
     try:
-        while True:
-            base_image = base_camera.get_image()
-            wrist_image = wrist_camera.get_image()
-            cv.imshow('base_image', cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
-            cv.imshow('wrist_image', cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
-            key = cv.waitKey(1)
-            if key == ord('s'):  # Save image
-                base_image_path = f'base-image-{int(10 * time.time()) % 100000000}.jpg'
-                cv.imwrite(base_image_path, cv.cvtColor(base_image, cv.COLOR_RGB2BGR))
-                print(f'Saved image to {base_image_path}')
-                wrist_image_path = f'wrist-image-{int(10 * time.time()) % 100000000}.jpg'
-                cv.imwrite(wrist_image_path, cv.cvtColor(wrist_image, cv.COLOR_RGB2BGR))
-                print(f'Saved image to {wrist_image_path}')
-    finally:
-        base_camera.close()
-        wrist_camera.close()
-        cv.destroyAllWindows()
+        for name, serial in list_realsense_serials():
+            print(f'  {name}  serial={serial}')
+        if not list_realsense_serials():
+            print('  (none)')
+    except Exception as e:
+        print(f'  (could not query: {e})')
+
+    print('Logitech v4l devices:')
+    import glob
+    logitech_paths = sorted(glob.glob('/dev/v4l/by-id/usb-046d_Logitech_*-video-index0'))
+    for p in logitech_paths:
+        print(f'  {p}')
+    if not logitech_paths:
+        print('  (none)')
+
+    if args.snapshot:
+        print('\nCapturing snapshots for constants.CAMERAS...')
+        for obs_key, (backend, identifier) in CAMERAS.items():
+            cam = _build_camera(backend, identifier)
+            image = None
+            while image is None:
+                image = cam.get_image()
+            path = f'{obs_key}-snapshot.jpg'
+            cv.imwrite(path, cv.cvtColor(image, cv.COLOR_RGB2BGR))
+            print(f'  {obs_key}: {image.shape} -> {path}')
+            cam.close()

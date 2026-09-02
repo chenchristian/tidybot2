@@ -21,8 +21,24 @@ ARM_RPC_PORT = 50001
 RPC_AUTHKEY = b'secret password'
 
 # Cameras
-BASE_CAMERA_SERIAL = '2512APC1ZSZ9'
-# WRIST_CAMERA_SERIAL = 'TODO'  # Not used by Kinova wrist camera
+# Base camera: Logitech C930e webcam (RGB only). Serial is the string in its
+# /dev/v4l/by-id/ path: usb-046d_Logitech_Webcam_C930e_<SERIAL>-video-index0
+BASE_CAMERA_SERIAL = 'DAA051BE'
+
+# Wrist cameras: Intel RealSense D405 (one per arm), RGB only for now (matches the
+# TidyBot++ paper). Fill in each device's serial from `rs-enumerate-devices` or
+# `python -m cameras --list-realsense`. Leave as None until the D405 is connected.
+LEFT_WRIST_CAMERA_SERIAL = None
+RIGHT_WRIST_CAMERA_SERIAL = None
+
+# Camera roster consumed by RealEnv: obs_key -> (backend, identifier).
+# backend is 'logitech' (v4l serial) or 'realsense' (D405 serial).
+# Comment/uncomment rows as cameras come online.
+CAMERAS = {
+    'base_image': ('logitech', BASE_CAMERA_SERIAL),
+    # 'left_wrist_image':  ('realsense', LEFT_WRIST_CAMERA_SERIAL),
+    # 'right_wrist_image': ('realsense', RIGHT_WRIST_CAMERA_SERIAL),
+}
 
 # Policy
 POLICY_SERVER_HOST = 'localhost'

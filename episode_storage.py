@@ -1,6 +1,7 @@
 # Author: Jimmy Wu
 # Date: October 2024
 
+import os
 import pickle
 import threading
 import time
@@ -9,6 +10,12 @@ from pathlib import Path
 import cv2 as cv
 import numpy as np
 from constants import POLICY_CONTROL_FREQ
+
+def default_data_dir(task='demos'):
+    """Dataset root. Override the base location with $TIDYBOT_DATA_DIR (e.g. a
+    mounted SSD or NAS); otherwise datasets go under ./data/ in the repo."""
+    base = os.environ.get('TIDYBOT_DATA_DIR', 'data')
+    return str(Path(base).expanduser() / task)
 
 def write_frames_to_mp4(frames, mp4_path):
     height, width, _ = frames[0].shape

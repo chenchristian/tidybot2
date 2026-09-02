@@ -5,7 +5,7 @@ import argparse
 import time
 from itertools import count
 from constants import POLICY_CONTROL_PERIOD
-from episode_storage import EpisodeWriter
+from episode_storage import EpisodeWriter, default_data_dir
 from policies import TeleopPolicy, RemotePolicy
 
 def should_save_episode(writer):
@@ -90,7 +90,7 @@ def main(args):
             env = MujocoEnv()
     else:
         from real_env import RealEnv
-        env = RealEnv(arm_enabled=False, camera_enabled=False)
+        env = RealEnv(arm_enabled=args.arms, camera_enabled=args.cameras)
 
     # Create policy
     if args.teleop:
@@ -98,9 +98,10 @@ def main(args):
     else:
         policy = RemotePolicy()
 
+    output_dir = args.output_dir or default_data_dir()
     try:
         while True:
-            writer = EpisodeWriter(args.output_dir) if args.save else None
+            writer = EpisodeWriter(output_dir) if args.save else None
             run_episode(env, policy, writer)
     finally:
         env.close()
@@ -110,5 +111,8 @@ if __name__ == '__main__':
     parser.add_argument('--sim', action='store_true')
     parser.add_argument('--teleop', action='store_true')
     parser.add_argument('--save', action='store_true')
-    parser.add_argument('--output-dir', default='data/demos')
+    parser.add_argument('--arms', action='store_true', help='enable the arm(s) (needs arm_server.py)')
+    parser.add_argument('--cameras', action='store_true', help='enable cameras from constants.CAMERAS')
+    parser.add_argument('--output-dir', default=None,
+                        help='dataset root (default: $TIDYBOT_DATA_DIR/demos or ./data/demos)')
     main(parser.parse_args())
