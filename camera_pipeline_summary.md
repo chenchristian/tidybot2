@@ -42,6 +42,7 @@ cd ~/tidybot2 && conda activate tidybot2
 
 python record_video.py                     # camera-only episode, Ctrl+C to stop
 python record_video.py --seconds 10        # auto-stop after 10 s
+python record_video.py --seconds 10 --endpoint /mnt/nas/demos   # override the output path
 
 python main.py --teleop --save --cameras   # full teleop demo (needs base_server.py
                                            # + arm_server.py + phone)
