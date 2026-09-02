@@ -74,17 +74,24 @@ def list_realsense_serials():
     return [(d.get_info(rs.camera_info.name), d.get_info(rs.camera_info.serial_number))
             for d in ctx.query_devices()]
 
-class RealSenseCamera(Camera):
+class RealSenseCamera:
     # Intel RealSense D405 wrist camera. RGB only for now (matches the TidyBot++
     # paper); the D405 also has a depth stream that can be enabled later -- see the
     # commented lines below and get_depth().
+    #
+    # Does NOT inherit Camera: it owns its worker thread so close() can stop the
+    # thread BEFORE stopping the librealsense pipeline. Calling pipeline.stop()
+    # while the worker is inside wait_for_frames() makes librealsense abort the
+    # process ("terminate called without an active exception").
     def __init__(self, serial, frame_width=640, frame_height=480, fps=30):
         import pyrealsense2 as rs
         self.rs = rs
         self.serial = serial
         self.frame_width = frame_width
         self.frame_height = frame_height
+        self.image = None
         self.depth_image = None
+        self.last_read_time = time.time()
 
         connected = {s for _, s in list_realsense_serials()}
         assert serial in connected, (
@@ -99,7 +106,9 @@ class RealSenseCamera(Camera):
         self.profile = self.pipeline.start(config)
         # self.align = rs.align(rs.stream.color)  # align depth into the color frame
 
-        super().__init__()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self.camera_worker, daemon=True)
+        self._thread.start()
 
         # Wait for the first frame so get_image() never returns None to callers
         # that don't expect it (matches KinovaCamera's warm-up behavior)
@@ -107,13 +116,13 @@ class RealSenseCamera(Camera):
             time.sleep(0.01)
 
     def camera_worker(self):
-        # librealsense delivers frames on its own; wait_for_frames() blocks until
-        # the next one is ready, so this loop naturally runs at the stream fps
-        while True:
+        # wait_for_frames() blocks until the next frame, so this loop naturally
+        # runs at the stream fps. Short timeout so we notice self._stop promptly.
+        while not self._stop.is_set():
             try:
-                frames = self.pipeline.wait_for_frames(1000)
+                frames = self.pipeline.wait_for_frames(500)
             except RuntimeError:
-                continue  # timeout - camera hiccup, just retry
+                continue  # timeout / hiccup - retry (or exit if stopping)
             # frames = self.align.process(frames)
             color_frame = frames.get_color_frame()
             if color_frame:
@@ -123,11 +132,17 @@ class RealSenseCamera(Camera):
             # if depth_frame:
             #     self.depth_image = np.asanyarray(depth_frame.get_data())  # HW uint16, mm
 
+    def get_image(self):
+        return self.image
+
     def get_depth(self):
         # Returns None until the depth stream above is uncommented
         return self.depth_image
 
     def close(self):
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2.0)
         try:
             self.pipeline.stop()
         except RuntimeError:
