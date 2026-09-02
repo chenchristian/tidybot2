@@ -9,30 +9,20 @@ from datetime import datetime
 from pathlib import Path
 import cv2 as cv
 import numpy as np
-from constants import POLICY_CONTROL_FREQ
+from record_video_config import DATA_DIR, RECORD_HZ, VIDEO_CODEC
 
-def default_data_dir(task='demos'):
-    """Dataset root. Override the base location with $TIDYBOT_DATA_DIR (e.g. a
-    mounted SSD or NAS); otherwise datasets go under ./data/ in the repo."""
-    base = os.environ.get('TIDYBOT_DATA_DIR', 'data')
-    return str(Path(base).expanduser() / task)
+def default_data_dir():
+    """Dataset root: $TIDYBOT_DATA_DIR if set, else record_video_config.DATA_DIR."""
+    return str(Path(os.environ.get('TIDYBOT_DATA_DIR') or DATA_DIR).expanduser())
 
-# 'avc1' (H.264) needs an x264-enabled encoder, which the pip `opencv-python`
-# wheel does not bundle (GPL). 'mp4v' (MPEG-4 Part 2) is always available and
-# still writes a .mp4; it is ~2x larger than H.264 at similar quality, which is
-# fine for policy data (images are downscaled to 84x84 for training anyway).
-# To get H.264 back: `conda install -c conda-forge ffmpeg x264` and switch to an
-# imageio-ffmpeg based writer.
-VIDEO_FOURCC = 'mp4v'
-
-def write_frames_to_mp4(frames, mp4_path):
+def write_frames_to_mp4(frames, mp4_path, fps=RECORD_HZ):
     height, width, _ = frames[0].shape
-    fourcc = cv.VideoWriter_fourcc(*VIDEO_FOURCC)
-    out = cv.VideoWriter(str(mp4_path), fourcc, POLICY_CONTROL_FREQ, (width, height))
+    fourcc = cv.VideoWriter_fourcc(*VIDEO_CODEC)
+    out = cv.VideoWriter(str(mp4_path), fourcc, fps, (width, height))
     if not out.isOpened():
         raise RuntimeError(
-            f'VideoWriter failed to open {mp4_path} with fourcc {VIDEO_FOURCC!r} - '
-            f'no usable encoder in this OpenCV build')
+            f'VideoWriter failed to open {mp4_path} with codec {VIDEO_CODEC!r} - '
+            f'no usable encoder in this OpenCV build (see record_video_config.VIDEO_CODEC)')
     for frame in frames:
         bgr_frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
         out.write(bgr_frame)

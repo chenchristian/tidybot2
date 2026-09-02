@@ -1,9 +1,8 @@
 # Standalone camera-only recording test.
 #
-# Captures frames from the cameras in constants.CAMERAS (no base, no arm, no
-# motors) and writes them out through the normal EpisodeWriter, so you can
-# verify the camera -> mp4 -> data.pkl pipeline end to end before any hardware
-# integration.
+# Captures frames from the configured cameras (no base, no arm, no motors) and
+# writes them out through the normal EpisodeWriter, so you can verify the
+# camera -> mp4 -> data.pkl pipeline end to end.
 #
 #   python record_cameras.py --seconds 5
 #   python record_cameras.py --seconds 5 --cameras base_image=logitech:DAA051BE
@@ -11,14 +10,20 @@
 # Then replay / inspect:
 #   python replay_episodes.py --sim --input-dir <printed path>/.. --show-images
 #   (or just open the .mp4 files in the episode dir)
+#
+# NOTE: record_video.py / record_video() is the config-driven version of this
+# (settings in record_video_config.py). This script stays for quick ad-hoc tests.
 
 import argparse
 import time
 from itertools import count
 import numpy as np
 from cameras import _build_camera
-from constants import CAMERAS, POLICY_CONTROL_FREQ, POLICY_CONTROL_PERIOD
+from record_video_config import CAMERAS, RECORD_HZ
 from episode_storage import EpisodeWriter, default_data_dir
+
+POLICY_CONTROL_FREQ = RECORD_HZ
+POLICY_CONTROL_PERIOD = 1.0 / RECORD_HZ
 
 # Zero proprio so EpisodeWriter's schema checks pass and replay_episodes can load it
 DUMMY_OBS = {
@@ -56,7 +61,7 @@ def main(args):
             time.sleep(0.01)
         print(f'  {key}: {cam.get_image().shape}')
 
-    output_dir = args.output_dir or default_data_dir('camera_test')
+    output_dir = args.output_dir or default_data_dir()
     writer = EpisodeWriter(output_dir)
     print(f'Recording to {writer.episode_dir}  ({POLICY_CONTROL_FREQ} Hz, {args.seconds}s)')
     print('Ctrl+C to stop early.')
@@ -94,7 +99,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--seconds', type=float, default=5.0)
     parser.add_argument('--cameras', nargs='*', default=None,
-                        help='override constants.CAMERAS, e.g. base_image=logitech:DAA051BE wrist_image=realsense:12345')
+                        help='override configured cameras, e.g. base_image=logitech:DAA051BE wrist_image=realsense:12345')
     parser.add_argument('--output-dir', default=None,
-                        help='dataset root (default: $TIDYBOT_DATA_DIR/camera_test or ./data/camera_test)')
+                        help='dataset root (default: $TIDYBOT_DATA_DIR or record_video_config.DATA_DIR)')
     main(parser.parse_args())

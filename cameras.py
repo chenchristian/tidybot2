@@ -9,7 +9,7 @@ from kortex_api.autogen.client_stubs.DeviceManagerClientRpc import DeviceManager
 from kortex_api.autogen.client_stubs.VisionConfigClientRpc import VisionConfigClient
 from kortex_api.autogen.messages import DeviceConfig_pb2, VisionConfig_pb2
 from kinova import DeviceConnection
-from constants import BASE_CAMERA_SERIAL
+import record_video_config as cfg
 
 class Camera:
     def __init__(self):
@@ -231,10 +231,13 @@ class KinovaCamera(Camera):
             vision_config.DoSensorFocusAction(sensor_focus_action, vision_device_id)
 
 def _build_camera(backend, identifier):
+    # Capture resolution / fps / focus come from record_video_config.py
     if backend == 'logitech':
-        return LogitechCamera(identifier)
+        w, h = cfg.LOGITECH_RESOLUTION
+        return LogitechCamera(identifier, frame_width=w, frame_height=h, focus=cfg.LOGITECH_FOCUS)
     if backend == 'realsense':
-        return RealSenseCamera(identifier)
+        w, h = cfg.REALSENSE_RESOLUTION
+        return RealSenseCamera(identifier, frame_width=w, frame_height=h, fps=cfg.REALSENSE_CAPTURE_FPS)
     if backend == 'kinova':
         return KinovaCamera()
     raise ValueError(f'unknown camera backend: {backend}')
@@ -242,10 +245,10 @@ def _build_camera(backend, identifier):
 if __name__ == '__main__':
     # Headless helper (works over SSH, no display needed):
     #   python -m cameras                 list connected cameras
-    #   python -m cameras --snapshot      grab one frame from every camera in
-    #                                     constants.CAMERAS and save it as a .jpg
+    #   python -m cameras --snapshot      grab one frame from every configured
+    #                                     camera and save it as a .jpg
     import argparse
-    from constants import CAMERAS
+    from record_video_config import CAMERAS
 
     parser = argparse.ArgumentParser()
     parser.add_argument('--snapshot', action='store_true',
