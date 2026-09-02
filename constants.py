@@ -26,18 +26,19 @@ RPC_AUTHKEY = b'secret password'
 BASE_CAMERA_SERIAL = 'DAA051BE'
 
 # Wrist cameras: Intel RealSense D405 (one per arm), RGB only for now (matches the
-# TidyBot++ paper). Fill in each device's serial from `rs-enumerate-devices` or
-# `python -m cameras --list-realsense`. Leave as None until the D405 is connected.
-LEFT_WRIST_CAMERA_SERIAL = None
-RIGHT_WRIST_CAMERA_SERIAL = None
+# TidyBot++ paper). Serials from `python -m cameras`.
+# NOTE: left/right assignment below is a GUESS - verify once the cameras are
+# mounted on the arms (cover one and see which stream goes dark) and swap if needed.
+LEFT_WRIST_CAMERA_SERIAL = '323622272216'
+RIGHT_WRIST_CAMERA_SERIAL = '353322271355'
 
 # Camera roster consumed by RealEnv: obs_key -> (backend, identifier).
 # backend is 'logitech' (v4l serial) or 'realsense' (D405 serial).
-# Comment/uncomment rows as cameras come online.
+# Comment out the wrist rows when running without the arms/D405s connected.
 CAMERAS = {
     'base_image': ('logitech', BASE_CAMERA_SERIAL),
-    # 'left_wrist_image':  ('realsense', LEFT_WRIST_CAMERA_SERIAL),
-    # 'right_wrist_image': ('realsense', RIGHT_WRIST_CAMERA_SERIAL),
+    'left_wrist_image':  ('realsense', LEFT_WRIST_CAMERA_SERIAL),
+    'right_wrist_image': ('realsense', RIGHT_WRIST_CAMERA_SERIAL),
 }
 
 # Policy
