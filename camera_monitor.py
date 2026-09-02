@@ -1,37 +1,51 @@
-# Live camera monitor -- "Pilot View" layout.
+# Camera monitor -- "Pilot View" layout, live or replay.
 #
-# Serves an MJPEG stream per camera plus a web page that shows one feed large
-# with the others as thumbnails (click a thumbnail to promote it). Read-only:
-# opens the cameras and streams frames, never touches the base or arms.
+# LIVE (default): serves an MJPEG stream per camera plus a web page showing one
+# feed large with the others as thumbnails. Opens the cameras read-only; never
+# touches the base or arms.
 #
-#   python camera_monitor.py                       # all cameras in constants.CAMERAS
+#   python camera_monitor.py                       # cameras from record_video_config
 #   python camera_monitor.py --port 5000
 #   python camera_monitor.py --cameras base_image=logitech:DAA051BE
+#
+# REPLAY: plays back a recorded episode instead of the live cameras -- no
+# hardware needed. Same Pilot View, plus a timeline scrubber and play/pause.
+#
+#   python camera_monitor.py --replay                       # most recent recording
+#   python camera_monitor.py --replay data/demos/20260902T155014617269
 #
 # Then from any machine on the same network:  http://sixsevensupremacy.local:8000
 
 import argparse
+import json
 import time
+from pathlib import Path
 
 import cv2 as cv
-from flask import Flask, Response, jsonify
+from flask import Flask, Response, jsonify, abort
 
 from cameras import _build_camera
 from constants import CAMERAS
+from episode_storage import EpisodeReader, default_data_dir
+from record_video_config import RECORD_HZ
 
 # Display metadata (obs_key -> (location label, device name, capture mode)).
-# Serial comes from the CAMERAS roster; this is just what the page shows.
 CAMERA_INFO = {
-    'base_image':        ('Base · front', 'Logitech C930e', '640×360 · 30 fps'),
-    'left_wrist_image':  ('Left wrist',        'RealSense D405',  '640×480 · 30 fps'),
-    'right_wrist_image': ('Right wrist',       'RealSense D405',  '640×480 · 30 fps'),
+    'base_image':        ('Base · front', 'Logitech C930e', '640×360'),
+    'left_wrist_image':  ('Left wrist',   'RealSense D405', '640×480'),
+    'right_wrist_image': ('Right wrist',  'RealSense D405', '640×480'),
 }
 
 app = Flask(__name__)
-CAMERAS_OPEN = {}   # obs_key -> {'cam', 'backend', 'serial', 'ok', 'err'}
+
+MODE = 'live'                 # 'live' or 'replay'
+CAMERAS_OPEN = {}            # live: obs_key -> {'cam', 'backend', 'serial', 'ok', 'err'}
+REPLAY = None               # replay: {'reader', 'dir', 'keys', 'num_frames', 'fps'}
 STREAM_FPS = 20
 JPEG_QUALITY = 80
 
+
+# --------------------------------------------------------------------------- live
 
 def open_cameras(roster):
     for key, (backend, identifier) in roster.items():
@@ -39,7 +53,7 @@ def open_cameras(roster):
             cam = _build_camera(backend, identifier)
             CAMERAS_OPEN[key] = {'cam': cam, 'backend': backend, 'serial': identifier, 'ok': True, 'err': None}
             print(f'[camera_monitor] {key}: open ({backend} {identifier})')
-        except Exception as e:  # noqa: BLE001 - want to keep going if one camera is missing
+        except Exception as e:  # noqa: BLE001 - keep going if one camera is missing
             CAMERAS_OPEN[key] = {'cam': None, 'backend': backend, 'serial': identifier, 'ok': False, 'err': str(e)}
             print(f'[camera_monitor] {key}: FAILED - {e}')
 
@@ -73,6 +87,8 @@ def mjpeg_frames(entry):
 
 @app.route('/stream/<key>')
 def stream(key):
+    if MODE != 'live':
+        abort(404)
     entry = CAMERAS_OPEN.get(key)
     if entry is None:
         return f'unknown camera: {key}', 404
@@ -80,31 +96,82 @@ def stream(key):
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
 
+# ------------------------------------------------------------------------- replay
+
+def latest_episode(root):
+    root = Path(root).expanduser()
+    if not root.is_dir():
+        return None
+    dirs = sorted((d for d in root.iterdir() if d.is_dir() and (d / 'data.pkl').exists()),
+                  key=lambda d: d.name)
+    return dirs[-1] if dirs else None
+
+
+def load_replay(spec):
+    """spec: '__latest__' or a path to an episode directory."""
+    if spec == '__latest__':
+        ep = latest_episode(default_data_dir())
+        if ep is None:
+            raise SystemExit(f'[camera_monitor] no recordings found under {default_data_dir()}')
+    else:
+        ep = Path(spec).expanduser()
+        if not (ep / 'data.pkl').exists():
+            raise SystemExit(f'[camera_monitor] not an episode directory (no data.pkl): {ep}')
+
+    reader = EpisodeReader(ep)
+    keys = [k for k, v in reader.observations[0].items() if getattr(v, 'ndim', 0) == 3]
+    ts = reader.timestamps
+    span = (ts[-1] - ts[0]) if len(ts) > 1 else 0.0
+    fps = (len(ts) - 1) / span if span > 0.1 else float(RECORD_HZ)
+    return {'reader': reader, 'dir': ep, 'keys': keys, 'num_frames': len(reader), 'fps': fps}
+
+
+@app.route('/replay/frame/<key>/<int:idx>')
+def replay_frame(key, idx):
+    if MODE != 'replay' or key not in REPLAY['keys']:
+        abort(404)
+    idx = max(0, min(REPLAY['num_frames'] - 1, idx))
+    img = REPLAY['reader'].observations[idx][key]        # HWC uint8 RGB
+    ok, buf = cv.imencode('.jpg', cv.cvtColor(img, cv.COLOR_RGB2BGR),
+                          [cv.IMWRITE_JPEG_QUALITY, JPEG_QUALITY])
+    if not ok:
+        abort(500)
+    resp = Response(buf.tobytes(), mimetype='image/jpeg')
+    resp.headers['Cache-Control'] = 'public, max-age=3600'   # frames never change
+    return resp
+
+
+# --------------------------------------------------------------------------- page
+
+def page_config():
+    if MODE == 'replay':
+        cams = [{'key': k,
+                 'location': CAMERA_INFO.get(k, (k, '', ''))[0],
+                 'device': CAMERA_INFO.get(k, ('', '', ''))[1],
+                 'mode': CAMERA_INFO.get(k, ('', '', ''))[2]}
+                for k in REPLAY['keys']]
+        return {'mode': 'replay', 'cameras': cams,
+                'episode': {'path': str(REPLAY['dir']),
+                            'name': REPLAY['dir'].name,
+                            'num_frames': REPLAY['num_frames'],
+                            'fps': round(REPLAY['fps'], 3)}}
+    cams = [{'key': k,
+             'location': CAMERA_INFO.get(k, (k, '', ''))[0],
+             'device': CAMERA_INFO.get(k, ('', '', ''))[1],
+             'mode': CAMERA_INFO.get(k, ('', '', ''))[2],
+             'serial': e['serial'], 'online': e['ok'], 'error': e['err']}
+            for k, e in CAMERAS_OPEN.items()]
+    return {'mode': 'live', 'cameras': cams, 'episode': None}
+
+
 @app.route('/status')
 def status():
-    return jsonify({
-        key: {'location': CAMERA_INFO.get(key, (key, '', ''))[0],
-              'device': CAMERA_INFO.get(key, ('', '', ''))[1],
-              'mode': CAMERA_INFO.get(key, ('', '', ''))[2],
-              'serial': e['serial'], 'backend': e['backend'],
-              'online': e['ok'], 'error': e['err']}
-        for key, e in CAMERAS_OPEN.items()
-    })
+    return jsonify(page_config())
 
 
 @app.route('/')
 def index():
-    cams = [
-        {'key': key,
-         'location': CAMERA_INFO.get(key, (key, '', ''))[0],
-         'device': CAMERA_INFO.get(key, ('', '', ''))[1],
-         'mode': CAMERA_INFO.get(key, ('', '', ''))[2],
-         'serial': e['serial'], 'backend': e['backend'],
-         'online': e['ok'], 'error': e['err']}
-        for key, e in CAMERAS_OPEN.items()
-    ]
-    import json
-    return PAGE.replace('/*CAMERAS_JSON*/', json.dumps(cams))
+    return PAGE.replace('/*CONFIG_JSON*/', json.dumps(page_config()))
 
 
 PAGE = r"""<!doctype html>
@@ -124,11 +191,19 @@ PAGE = r"""<!doctype html>
   body { margin:0; background:var(--ground); color:var(--ink);
     font-family:"IBM Plex Sans",system-ui,-apple-system,sans-serif; }
   .mono { font-family:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace; }
+  button { font:inherit; color:inherit; }
+
   header { display:flex; align-items:center; gap:10px; padding:12px 18px;
-    border-bottom:1px solid var(--line); }
-  header .rec { width:9px; height:9px; border-radius:50%; background:var(--accent);
+    border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header .dot { width:9px; height:9px; border-radius:50%; background:var(--accent);
     box-shadow:0 0 0 3px var(--accent-tint); }
   header b { font-weight:600; letter-spacing:-.01em; }
+  header .badge { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:10.5px;
+    letter-spacing:.1em; padding:2px 8px; border-radius:5px; background:var(--accent-tint);
+    color:var(--accent); }
+  header .epath { font-family:"IBM Plex Mono",ui-monospace,monospace; font-size:11px;
+    color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    max-width:52vw; }
   header .clock { margin-left:auto; font-size:12px; color:var(--muted);
     font-family:"IBM Plex Mono",ui-monospace,monospace; }
 
@@ -149,6 +224,7 @@ PAGE = r"""<!doctype html>
   .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:var(--live);
     animation:pulse 2s ease-in-out infinite; }
   .pill.down { color:var(--muted); } .pill.down::before { background:var(--muted); animation:none; }
+  .pill.past { color:var(--accent); } .pill.past::before { background:var(--accent); animation:none; }
   @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.35;} }
   @media (prefers-reduced-motion:reduce){ .pill::before{ animation:none; } }
 
@@ -161,8 +237,7 @@ PAGE = r"""<!doctype html>
   .rail { display:flex; flex-direction:column; gap:14px; }
   @media (max-width:820px){ .rail { flex-direction:row; } .rail button { flex:1; } }
   .thumb { border:1px solid var(--line); border-radius:12px; overflow:hidden; background:var(--surface);
-    cursor:pointer; padding:0; font:inherit; color:inherit; text-align:left;
-    transition:border-color .15s, box-shadow .15s; }
+    cursor:pointer; padding:0; text-align:left; transition:border-color .15s, box-shadow .15s; }
   .thumb:hover { border-color:var(--accent); }
   .thumb:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
   .thumb .frame { aspect-ratio:16/10; }
@@ -174,12 +249,31 @@ PAGE = r"""<!doctype html>
     border-radius:5px; background:rgba(10,12,14,.66); color:#f4f4f2;
     font-family:"IBM Plex Mono",ui-monospace,monospace; }
 
-  footer { max-width:1200px; margin:0 auto; padding:14px 18px; color:var(--muted); font-size:12px; }
+  /* transport (replay only) */
+  .transport { margin-top:14px; border:1px solid var(--line); border-radius:12px;
+    background:var(--surface); padding:12px 14px; display:flex; align-items:center; gap:14px; }
+  .transport button.pp {
+    flex-shrink:0; width:40px; height:40px; border-radius:50%; border:1px solid var(--line-strong);
+    background:var(--accent); color:#1a1207; font-size:13px; font-weight:600; cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .transport button.pp:hover { filter:brightness(1.08); }
+  .transport input[type=range] {
+    flex:1; accent-color:var(--accent); height:4px; cursor:pointer;
+  }
+  .transport .time { flex-shrink:0; font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; min-width:150px; text-align:right; }
+
+  footer { max-width:1200px; margin:0 auto; padding:14px 18px; color:var(--muted); font-size:12px;
+    word-break:break-all; }
 </style>
 </head>
 <body>
 <header>
-  <span class="rec"></span><b>Camera Monitor</b>
+  <span class="dot" id="dot"></span>
+  <b>Camera Monitor</b>
+  <span class="badge" id="badge" hidden>REPLAY</span>
+  <span class="epath" id="epath" hidden></span>
   <span class="clock" id="clock"></span>
 </header>
 <main>
@@ -190,50 +284,89 @@ PAGE = r"""<!doctype html>
     </div>
     <div class="rail" id="rail"></div>
   </div>
+  <div class="transport" id="transport" hidden>
+    <button class="pp" id="pp" aria-label="Play / pause">Play</button>
+    <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="Timeline">
+    <span class="time" id="time">0.0 / 0.0 s</span>
+  </div>
 </main>
 <footer id="foot"></footer>
 
 <script>
-  const CAMS = /*CAMERAS_JSON*/;
-  let selected = (CAMS.find(c => c.online) || CAMS[0] || {}).key;
+  const CONFIG = /*CONFIG_JSON*/;
+  const CAMS = CONFIG.cameras;
+  const REPLAY = CONFIG.mode === 'replay';
+  let selected = (CAMS.find(c => c.online !== false) || CAMS[0] || {}).key;
 
-  // One persistent stream node per camera, created once. Moving these around the
-  // DOM does NOT restart the MJPEG connection, so switching cameras is instant
-  // and never flashes black.
+  // ---- per-camera image / offline nodes (persistent; moving them in the DOM
+  //      does not reload them) --------------------------------------------------
   const nodes = {};
   for (const cam of CAMS) {
-    if (cam.online) {
-      const img = document.createElement('img');
-      img.alt = cam.location;
-      img.src = '/stream/' + cam.key;
-      nodes[cam.key] = img;
-    } else {
+    if (!REPLAY && cam.online === false) {
       const d = document.createElement('div');
       d.className = 'offline';
       d.textContent = 'offline — ' + (cam.error || 'not connected');
       nodes[cam.key] = d;
+    } else {
+      const img = document.createElement('img');
+      img.alt = cam.location;
+      if (!REPLAY) img.src = '/stream/' + cam.key;   // live: MJPEG stream
+      nodes[cam.key] = img;
     }
   }
 
+  // ---- replay playback state ---------------------------------------------------
+  const NF = REPLAY ? CONFIG.episode.num_frames : 0;
+  const FPS = REPLAY ? CONFIG.episode.fps : 0;
+  let frame = 0, playing = false, timer = null;
+
+  function setFrame(i) {
+    frame = Math.max(0, Math.min(NF - 1, Math.round(i)));
+    for (const cam of CAMS) {
+      const n = nodes[cam.key];
+      if (n.tagName === 'IMG') n.src = '/replay/frame/' + cam.key + '/' + frame;
+    }
+    const scrub = document.getElementById('scrub');
+    if (+scrub.value !== frame) scrub.value = frame;
+    const t = FPS > 0 ? frame / FPS : 0;
+    const total = FPS > 0 ? (NF - 1) / FPS : 0;
+    document.getElementById('time').textContent =
+      t.toFixed(1) + ' / ' + total.toFixed(1) + ' s   ·   ' + (frame + 1) + ' / ' + NF;
+  }
+  function tick() {
+    if (frame >= NF - 1) { setFrame(0); }   // loop
+    else { setFrame(frame + 1); }
+  }
+  function play() {
+    if (playing || NF === 0) return;
+    playing = true;
+    document.getElementById('pp').textContent = 'Pause';
+    timer = setInterval(tick, FPS > 0 ? 1000 / FPS : 100);
+  }
+  function pause() {
+    playing = false;
+    document.getElementById('pp').textContent = 'Play';
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  // ---- render (Pilot View: one big + thumbnails) -----------------------------
   function render() {
     const cam = CAMS.find(c => c.key === selected) || CAMS[0];
 
     const pf = document.getElementById('primary-frame');
     pf.replaceChildren(nodes[cam.key]);
     const pill = document.createElement('span');
-    pill.className = 'pill' + (cam.online ? '' : ' down');
-    pill.textContent = cam.online ? 'LIVE' : 'DOWN';
+    if (REPLAY) { pill.className = 'pill past'; pill.textContent = 'RECORDING'; }
+    else if (cam.online === false) { pill.className = 'pill down'; pill.textContent = 'DOWN'; }
+    else { pill.className = 'pill'; pill.textContent = 'LIVE'; }
     pf.appendChild(pill);
 
-    document.getElementById('primary-caption').innerHTML =
-      '<span class="loc"></span><span class="sep">—</span><span class="mono d"></span>'
-      + '<span class="sep">·</span><span class="mono s"></span>'
-      + '<span class="sep">·</span><span class="mono m"></span>';
     const cap = document.getElementById('primary-caption');
+    cap.innerHTML = '<span class="loc"></span><span class="sep">—</span><span class="mono d"></span>'
+      + '<span class="sep">·</span><span class="mono s"></span>';
     cap.querySelector('.loc').textContent = cam.location;
     cap.querySelector('.d').textContent = cam.device;
-    cap.querySelector('.s').textContent = cam.serial;
-    cap.querySelector('.m').textContent = cam.mode;
+    cap.querySelector('.s').textContent = REPLAY ? cam.key : cam.serial;
 
     const rail = document.getElementById('rail');
     rail.replaceChildren();
@@ -251,22 +384,46 @@ PAGE = r"""<!doctype html>
       const meta = document.createElement('div');
       meta.className = 'tmeta';
       const bb = document.createElement('b'); bb.textContent = c.location;
-      const sp = document.createElement('span'); sp.textContent = c.serial;
+      const sp = document.createElement('span'); sp.textContent = REPLAY ? c.key : c.serial;
       meta.append(bb, sp);
       b.append(fr, meta);
       rail.appendChild(b);
     });
   }
 
-  document.getElementById('foot').textContent =
-    CAMS.length + ' camera(s) · ' + CAMS.filter(c => c.online).length + ' online · '
-    + 'click a thumbnail to enlarge it';
+  // ---- wire up --------------------------------------------------------------
+  if (REPLAY) {
+    document.getElementById('dot').style.background = 'var(--accent)';
+    document.getElementById('badge').hidden = false;
+    const ep = document.getElementById('epath');
+    ep.hidden = false; ep.textContent = CONFIG.episode.path; ep.title = CONFIG.episode.path;
+    document.getElementById('clock').textContent =
+      NF + ' frames · ' + FPS.toFixed(1) + ' fps';
 
-  setInterval(() => {
-    document.getElementById('clock').textContent = new Date().toLocaleTimeString();
-  }, 1000);
+    const t = document.getElementById('transport');
+    t.hidden = false;
+    const scrub = document.getElementById('scrub');
+    scrub.max = String(NF - 1);
+    document.getElementById('pp').onclick = () => (playing ? pause() : play());
+    scrub.addEventListener('input', () => { pause(); setFrame(+scrub.value); });
+    document.addEventListener('keydown', e => {
+      if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); }
+      else if (e.key === 'ArrowRight') { pause(); setFrame(frame + 1); }
+      else if (e.key === 'ArrowLeft') { pause(); setFrame(frame - 1); }
+    });
 
-  render();
+    render();
+    setFrame(0);
+    play();
+  } else {
+    document.getElementById('foot').textContent =
+      CAMS.length + ' camera(s) · ' + CAMS.filter(c => c.online !== false).length
+      + ' online · click a thumbnail to enlarge it';
+    setInterval(() => {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString();
+    }, 1000);
+    render();
+  }
 </script>
 </body>
 </html>
@@ -283,29 +440,42 @@ def parse_camera_specs(specs):
 
 
 def main():
-    global STREAM_FPS, JPEG_QUALITY
+    global STREAM_FPS, JPEG_QUALITY, MODE, REPLAY
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument('--port', type=int, default=8000)
     parser.add_argument('--host', default='0.0.0.0')
-    parser.add_argument('--fps', type=int, default=STREAM_FPS, help='max stream fps per camera')
+    parser.add_argument('--fps', type=int, default=STREAM_FPS, help='max live stream fps per camera')
     parser.add_argument('--quality', type=int, default=JPEG_QUALITY, help='JPEG quality 1-100')
     parser.add_argument('--cameras', nargs='*', default=None,
-                        help='override constants.CAMERAS, e.g. base_image=logitech:DAA051BE')
+                        help='live only: override configured cameras, e.g. base_image=logitech:DAA051BE')
+    parser.add_argument('--replay', nargs='?', const='__latest__', default=None, metavar='EPISODE_DIR',
+                        help='replay a recording instead of the live cameras; '
+                             'pass an episode directory, or omit for the most recent recording')
     args = parser.parse_args()
 
     STREAM_FPS, JPEG_QUALITY = args.fps, args.quality
 
-    roster = parse_camera_specs(args.cameras) if args.cameras else CAMERAS
-    open_cameras(roster)
-    online = [k for k, e in CAMERAS_OPEN.items() if e['ok']]
-    print(f'[camera_monitor] {len(online)}/{len(CAMERAS_OPEN)} cameras online: {online}')
-    print(f'[camera_monitor] open http://<this-host>:{args.port}  (e.g. sixsevensupremacy.local:{args.port})')
+    if args.replay is not None:
+        MODE = 'replay'
+        REPLAY = load_replay(args.replay)
+        print(f'[camera_monitor] replay: {REPLAY["dir"]}')
+        print(f'[camera_monitor]   {REPLAY["num_frames"]} frames, {REPLAY["fps"]:.1f} fps, '
+              f'cameras: {REPLAY["keys"]}')
+    else:
+        roster = parse_camera_specs(args.cameras) if args.cameras else CAMERAS
+        open_cameras(roster)
+        online = [k for k, e in CAMERAS_OPEN.items() if e['ok']]
+        print(f'[camera_monitor] live: {len(online)}/{len(CAMERAS_OPEN)} cameras online: {online}')
+
+    print(f'[camera_monitor] open http://<this-host>:{args.port}  '
+          f'(e.g. sixsevensupremacy.local:{args.port})')
 
     try:
         app.run(host=args.host, port=args.port, threaded=True)
     finally:
-        close_cameras()
+        if MODE == 'live':
+            close_cameras()
 
 
 if __name__ == '__main__':
