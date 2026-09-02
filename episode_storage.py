@@ -17,10 +17,22 @@ def default_data_dir(task='demos'):
     base = os.environ.get('TIDYBOT_DATA_DIR', 'data')
     return str(Path(base).expanduser() / task)
 
+# 'avc1' (H.264) needs an x264-enabled encoder, which the pip `opencv-python`
+# wheel does not bundle (GPL). 'mp4v' (MPEG-4 Part 2) is always available and
+# still writes a .mp4; it is ~2x larger than H.264 at similar quality, which is
+# fine for policy data (images are downscaled to 84x84 for training anyway).
+# To get H.264 back: `conda install -c conda-forge ffmpeg x264` and switch to an
+# imageio-ffmpeg based writer.
+VIDEO_FOURCC = 'mp4v'
+
 def write_frames_to_mp4(frames, mp4_path):
     height, width, _ = frames[0].shape
-    fourcc = cv.VideoWriter_fourcc(*'avc1')
+    fourcc = cv.VideoWriter_fourcc(*VIDEO_FOURCC)
     out = cv.VideoWriter(str(mp4_path), fourcc, POLICY_CONTROL_FREQ, (width, height))
+    if not out.isOpened():
+        raise RuntimeError(
+            f'VideoWriter failed to open {mp4_path} with fourcc {VIDEO_FOURCC!r} - '
+            f'no usable encoder in this OpenCV build')
     for frame in frames:
         bgr_frame = cv.cvtColor(frame, cv.COLOR_RGB2BGR)
         out.write(bgr_frame)
