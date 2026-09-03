@@ -263,6 +263,8 @@ PAGE = r"""<!doctype html>
   }
   .transport .time { flex-shrink:0; font-family:"IBM Plex Mono",ui-monospace,monospace;
     font-size:12px; color:var(--muted); font-variant-numeric:tabular-nums; min-width:150px; text-align:right; }
+  .transport .buf { flex-shrink:0; font-family:"IBM Plex Mono",ui-monospace,monospace;
+    font-size:11px; color:var(--accent); }
 
   footer { max-width:1200px; margin:0 auto; padding:14px 18px; color:var(--muted); font-size:12px;
     word-break:break-all; }
@@ -287,6 +289,7 @@ PAGE = r"""<!doctype html>
   <div class="transport" id="transport" hidden>
     <button class="pp" id="pp" aria-label="Play / pause">Play</button>
     <input type="range" id="scrub" min="0" max="0" value="0" step="1" aria-label="Timeline">
+    <span class="buf" id="buf" hidden></span>
     <span class="time" id="time">0.0 / 0.0 s</span>
   </div>
 </main>
@@ -315,38 +318,64 @@ PAGE = r"""<!doctype html>
     }
   }
 
-  // ---- replay playback state ---------------------------------------------------
+  // ---- replay playback (requestAnimationFrame wall-clock player) --------------
+  // The displayed frame is always floor(elapsed * fps), so after any stall
+  // (backgrounded tab, slow network) it shows the CORRECT current frame instead
+  // of replaying a queued backlog. Frames are preloaded into the browser cache,
+  // so showFrame() never waits on the network.
   const NF = REPLAY ? CONFIG.episode.num_frames : 0;
-  const FPS = REPLAY ? CONFIG.episode.fps : 0;
-  let frame = 0, playing = false, timer = null;
+  const FPS = REPLAY ? (CONFIG.episode.fps || 10) : 0;
+  const frameURL = (k, i) => '/replay/frame/' + k + '/' + i;
+  let frame = -1, playing = false, raf = 0, startWall = 0, startFrame = 0;
 
-  function setFrame(i) {
-    frame = Math.max(0, Math.min(NF - 1, Math.round(i)));
+  function showFrame(i) {
+    i = Math.max(0, Math.min(NF - 1, Math.round(i)));
+    if (i === frame) return;
+    frame = i;
     for (const cam of CAMS) {
       const n = nodes[cam.key];
-      if (n.tagName === 'IMG') n.src = '/replay/frame/' + cam.key + '/' + frame;
+      if (n.tagName === 'IMG') n.src = frameURL(cam.key, i);   // cached -> instant
     }
     const scrub = document.getElementById('scrub');
-    if (+scrub.value !== frame) scrub.value = frame;
-    const t = FPS > 0 ? frame / FPS : 0;
-    const total = FPS > 0 ? (NF - 1) / FPS : 0;
+    if (+scrub.value !== i) scrub.value = i;
+    const total = (NF - 1) / FPS;
     document.getElementById('time').textContent =
-      t.toFixed(1) + ' / ' + total.toFixed(1) + ' s   ·   ' + (frame + 1) + ' / ' + NF;
+      (i / FPS).toFixed(1) + ' / ' + total.toFixed(1) + ' s   ·   ' + (i + 1) + ' / ' + NF;
   }
-  function tick() {
-    if (frame >= NF - 1) { setFrame(0); }   // loop
-    else { setFrame(frame + 1); }
+  function loop() {
+    if (!playing) return;
+    let target = startFrame + Math.floor((performance.now() - startWall) / 1000 * FPS);
+    if (target >= NF) { startWall = performance.now(); startFrame = 0; target = 0; }  // loop
+    showFrame(target);
+    raf = requestAnimationFrame(loop);
   }
   function play() {
     if (playing || NF === 0) return;
     playing = true;
     document.getElementById('pp').textContent = 'Pause';
-    timer = setInterval(tick, FPS > 0 ? 1000 / FPS : 100);
+    startWall = performance.now();
+    startFrame = (frame < 0 || frame >= NF - 1) ? 0 : frame;
+    raf = requestAnimationFrame(loop);
   }
   function pause() {
+    if (!playing) return;
     playing = false;
     document.getElementById('pp').textContent = 'Play';
-    if (timer) { clearInterval(timer); timer = null; }
+    cancelAnimationFrame(raf);
+  }
+  function seek(i) { pause(); showFrame(i); }
+
+  function preload() {
+    const buf = document.getElementById('buf');
+    const total = NF * CAMS.length;
+    let done = 0;
+    const bump = () => {
+      done++;
+      if (done >= total) buf.hidden = true;
+      else { buf.hidden = false; buf.textContent = 'buffering ' + Math.round(100 * done / total) + '%'; }
+    };
+    for (const cam of CAMS)
+      for (let i = 0; i < NF; i++) { const im = new Image(); im.onload = im.onerror = bump; im.src = frameURL(cam.key, i); }
   }
 
   // ---- render (Pilot View: one big + thumbnails) -----------------------------
@@ -405,15 +434,21 @@ PAGE = r"""<!doctype html>
     const scrub = document.getElementById('scrub');
     scrub.max = String(NF - 1);
     document.getElementById('pp').onclick = () => (playing ? pause() : play());
-    scrub.addEventListener('input', () => { pause(); setFrame(+scrub.value); });
+    scrub.addEventListener('input', () => seek(+scrub.value));
     document.addEventListener('keydown', e => {
       if (e.key === ' ') { e.preventDefault(); playing ? pause() : play(); }
-      else if (e.key === 'ArrowRight') { pause(); setFrame(frame + 1); }
-      else if (e.key === 'ArrowLeft') { pause(); setFrame(frame - 1); }
+      else if (e.key === 'ArrowRight') seek(frame + 1);
+      else if (e.key === 'ArrowLeft') seek(frame - 1);
+    });
+    // tab was hidden -> rAF paused -> re-anchor so playback resumes from the
+    // frame on screen, not wherever wall-clock drifted to
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && playing) { startWall = performance.now(); startFrame = frame; }
     });
 
     render();
-    setFrame(0);
+    showFrame(0);
+    preload();
     play();
   } else {
     document.getElementById('foot').textContent =
